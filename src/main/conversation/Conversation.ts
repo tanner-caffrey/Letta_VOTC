@@ -13,6 +13,10 @@ import path from 'path';
 import {Message, MessageChunk, ErrorMessage, Summary, Action, ActionResponse} from '../ts/conversation_interfaces.js';
 import { RunFileManager } from '../RunFileManager.js';
 import { ChatWindow } from '../windows/ChatWindow.js';
+import { LettaAgentManager } from '../letta/LettaAgentManager.js';
+import { EventBatcher } from '../letta/EventBatcher.js';
+import { MemoryTransformer } from '../letta/MemoryTransformer.js';
+import { LettaMessageHandler } from '../letta/LettaMessageHandler.js';
 
 const userDataPath = path.join(app.getPath('userData'), 'votc_data');
 
@@ -30,7 +34,13 @@ export class Conversation{
     actions: Action[];
     summaries: Map<number, Summary[]>;
     currentSummary: string;
-    
+
+    // Letta integration (optional, only if enabled)
+    lettaAgentManager?: LettaAgentManager;
+    eventBatcher?: EventBatcher;
+    memoryTransformer?: MemoryTransformer;
+    lettaMessageHandler?: LettaMessageHandler;
+
     constructor(gameData: GameData, config: Config, chatWindow: ChatWindow){
         console.log('Conversation initialized.');
         this.chatWindow = chatWindow;
@@ -81,7 +91,33 @@ export class Conversation{
         this.actions = [];
 
         [this.textGenApiConnection, this.summarizationApiConnection, this.actionsApiConnection] = this.getApiConnections();
-        
+
+        // Initialize Letta integration if enabled
+        if (config.lettaEnabled) {
+            console.log('Initializing Letta integration');
+            try {
+                this.lettaAgentManager = new LettaAgentManager(config);
+                this.memoryTransformer = new MemoryTransformer(config);
+                this.eventBatcher = new EventBatcher(
+                    config,
+                    this.lettaAgentManager.getClient(),
+                    this.memoryTransformer
+                );
+                this.lettaMessageHandler = new LettaMessageHandler(
+                    this.lettaAgentManager.getClient(),
+                    config,
+                    chatWindow
+                );
+                console.log('Letta integration initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize Letta integration:', error);
+                this.lettaAgentManager = undefined;
+                this.eventBatcher = undefined;
+                this.memoryTransformer = undefined;
+                this.lettaMessageHandler = undefined;
+            }
+        }
+
         this.loadConfig();
     }
 
@@ -116,7 +152,18 @@ export class Conversation{
     
     async generateNewAIMessage(character: Character){
         console.log(`Generating AI message for character: ${character.fullName}`);
-        
+
+        // Check if we should use Letta for this character
+        if (this.config.lettaEnabled && this.lettaAgentManager && this.lettaMessageHandler) {
+            if (this.lettaAgentManager.hasAgent(character.id)) {
+                console.log(`Using Letta agent for character: ${character.fullName}`);
+                return await this.generateLettaMessage(character);
+            }
+        }
+
+        // Traditional VOTC flow continues below
+        console.log(`Using traditional VOTC flow for character: ${character.fullName}`);
+
         const isSelfTalk = this.gameData.playerID === this.gameData.aiID;
         const characterNameForResponse = isSelfTalk ? character.shortName : character.fullName;
 
@@ -310,6 +357,54 @@ export class Conversation{
                 this.chatWindow.window.webContents.send('actions-receive', collectedActions);    
                 console.log(`Sent ${collectedActions.length} actions to chat window.`);
             }
+        }
+    }
+
+    /**
+     * Generate message using Letta agent
+     */
+    async generateLettaMessage(character: Character): Promise<void> {
+        console.log(`Generating Letta message for character: ${character.fullName}`);
+
+        if (!this.lettaAgentManager || !this.lettaMessageHandler || !this.eventBatcher) {
+            console.error('Letta components not initialized');
+            return;
+        }
+
+        try {
+            // Get agent ID
+            const agentId = this.lettaAgentManager.getAgentId(character.id);
+            if (!agentId) {
+                console.error(`No agent ID found for character ${character.id}`);
+                return;
+            }
+
+            // Flush pending events before conversation
+            console.log('Flushing pending events before conversation');
+            await this.eventBatcher.flushEvents(agentId);
+
+            // Get last user message
+            const lastUserMessage = this.messages.filter(m => m.role === 'user').pop();
+            if (!lastUserMessage) {
+                console.warn('No user message found to send to Letta agent');
+                return;
+            }
+
+            // Send message to Letta agent and get actions
+            const actionResponses = await this.lettaMessageHandler.sendMessage(
+                agentId,
+                character.id,
+                character.fullName,
+                lastUserMessage.content
+            );
+
+            // Send actions to chat window
+            this.chatWindow.window.webContents.send('actions-receive', actionResponses);
+            console.log(`Sent ${actionResponses.length} Letta actions to chat window`);
+
+        } catch (error) {
+            console.error('Error generating Letta message:', error);
+            this.chatWindow.window.webContents.send('error-message', `Error with Letta agent: ${error}`);
         }
     }
 
@@ -512,6 +607,38 @@ export class Conversation{
             console.log(`Loaded custom action: ${file}`);
         }
         console.log(`Finished loading actions. Total actions loaded: ${this.actions.length}`);
+    }
+
+    /**
+     * Check if the AI character is using a Letta agent
+     */
+    isUsingLettaAgent(): boolean {
+        if (!this.config.lettaEnabled || !this.lettaAgentManager) {
+            return false;
+        }
+
+        const aiCharacter = this.gameData.characters.get(this.gameData.aiID);
+        if (!aiCharacter) {
+            return false;
+        }
+
+        return this.lettaAgentManager.hasAgent(aiCharacter.id);
+    }
+
+    /**
+     * Get the Letta agent ID for the AI character (if any)
+     */
+    getLettaAgentId(): string | null {
+        if (!this.config.lettaEnabled || !this.lettaAgentManager) {
+            return null;
+        }
+
+        const aiCharacter = this.gameData.characters.get(this.gameData.aiID);
+        if (!aiCharacter) {
+            return null;
+        }
+
+        return this.lettaAgentManager.getAgentId(aiCharacter.id);
     }
 
 }

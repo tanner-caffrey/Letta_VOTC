@@ -16,6 +16,7 @@ let refreshactionsButton: HTMLButtonElement = document.querySelector("#refresh-a
 
 let config;
 let disabledActions:string[];
+let actionApprovalLevels: Record<string, 'auto' | 'approval' | 'blocked'>;
 let actionsPath: string;
 
 document.getElementById("container")!.style.display = "block";
@@ -24,8 +25,9 @@ init();
 async function init(){
     config = await ipcRenderer.invoke('get-config');
 
-    
+
      disabledActions= config!.disabledActions;
+     actionApprovalLevels = config!.actionApprovalLevels || {};
 
     loadactions();
 
@@ -101,16 +103,26 @@ async function loadactions(){
 
     
 
-    for(const fileName of standardFileNames){   
+    for(const fileName of standardFileNames){
         let file  = require(path.join(actionsPath, 'standard', fileName));
-        
+
         let element = document.createElement("div");
+        element.style.display = "flex";
+        element.style.alignItems = "center";
+        element.style.marginBottom = "8px";
+        element.style.gap = "10px";
 
         let isChecked = !disabledActions.includes(file.signature);
+        let approvalLevel = actionApprovalLevels[file.signature] || 'approval';
 
         element.innerHTML = `
         <input type="checkbox" id="${file.signature}" ${isChecked? "checked" : ""}>
-        <label>${file.signature}</label>
+        <label style="flex: 1; min-width: 200px;">${file.signature}</label>
+        <select id="approval-${file.signature}" style="width: 100px; padding: 2px;">
+            <option value="auto" ${approvalLevel === 'auto' ? 'selected' : ''}>Auto</option>
+            <option value="approval" ${approvalLevel === 'approval' ? 'selected' : ''}>Approval</option>
+            <option value="blocked" ${approvalLevel === 'blocked' ? 'selected' : ''}>Blocked</option>
+        </select>
         `
 
         actionsDiv.appendChild(element);
@@ -129,34 +141,59 @@ async function loadactions(){
             }
             console.log(disabledActions)
             ipcRenderer.send('config-change', "disabledActions", disabledActions);
+        });
+
+        // Approval level dropdown change handler
+        const approvalSelect = element.querySelector(`#approval-${file.signature}`) as HTMLSelectElement;
+        approvalSelect.addEventListener("change", (e: any)=>{
+            actionApprovalLevels[file.signature] = e.target.value;
+            console.log("Updated approval levels:", actionApprovalLevels);
+            ipcRenderer.send('config-change', "actionApprovalLevels", actionApprovalLevels);
         });
 
         let creatorString = "";
         if(file.creator){
             creatorString = `<li class="action-item"><b>Made by:</b> ${file.creator}</li>`;
         }
-        
+
         element.addEventListener("mouseenter", (e: any)=>{
+            const approvalLevelDesc = approvalLevel === 'auto'
+                ? 'Executes automatically without player confirmation (for Letta agents)'
+                : approvalLevel === 'blocked'
+                ? 'Blocked from execution (for Letta agents)'
+                : 'Requires player approval before execution (for Letta agents)';
+
             actionDescriptorDiv.innerHTML = `
             <h3>${file.signature}</h3>
             <ul>
                 <li class="action-item"><b>Description:</b> ${file.description}</li>
+                <li class="action-item"><b>Letta Approval:</b> ${approvalLevel} - ${approvalLevelDesc}</li>
                 ${creatorString}
             </ul>
             `;
         });
     }
 
-    for(const fileName of customFileNames){   
+    for(const fileName of customFileNames){
         let file  = require(path.join(actionsPath, 'custom', fileName));
-        
+
         let element = document.createElement("div");
+        element.style.display = "flex";
+        element.style.alignItems = "center";
+        element.style.marginBottom = "8px";
+        element.style.gap = "10px";
 
         let isChecked = !disabledActions.includes(file.signature);
+        let approvalLevel = actionApprovalLevels[file.signature] || 'approval';
 
         element.innerHTML = `
         <input type="checkbox" id="${file.signature}" ${isChecked? "checked" : ""}>
-        <label>${file.signature}</label>
+        <label style="flex: 1; min-width: 200px;">${file.signature}</label>
+        <select id="approval-${file.signature}" style="width: 100px; padding: 2px;">
+            <option value="auto" ${approvalLevel === 'auto' ? 'selected' : ''}>Auto</option>
+            <option value="approval" ${approvalLevel === 'approval' ? 'selected' : ''}>Approval</option>
+            <option value="blocked" ${approvalLevel === 'blocked' ? 'selected' : ''}>Blocked</option>
+        </select>
         `
 
         actionsDiv.appendChild(element);
@@ -175,7 +212,15 @@ async function loadactions(){
             }
             console.log(disabledActions)
             ipcRenderer.send('config-change', "disabledActions", disabledActions);
-        });     
+        });
+
+        // Approval level dropdown change handler
+        const approvalSelect = element.querySelector(`#approval-${file.signature}`) as HTMLSelectElement;
+        approvalSelect.addEventListener("change", (e: any)=>{
+            actionApprovalLevels[file.signature] = e.target.value;
+            console.log("Updated approval levels:", actionApprovalLevels);
+            ipcRenderer.send('config-change', "actionApprovalLevels", actionApprovalLevels);
+        });
     }
 }
 

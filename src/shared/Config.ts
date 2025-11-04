@@ -53,6 +53,18 @@ export class Config{
     selectedSelfTalkExMsgScript!: string;
     selfTalkSummarizePrompt!: string;
 
+    // Letta integration configuration
+    lettaEnabled!: boolean;
+    lettaServerUrl!: string;
+    lettaDefaultModel!: string;
+    lettaDefaultEmbedding!: string;
+    lettaEventBatchSize!: number;
+    lettaEventBatchTimeoutMs!: number;
+    lettaFirstPersonTransform!: boolean;
+    lettaShowReasoning!: boolean;
+    lettaMaxEventQueueSize!: number;
+    actionApprovalLevels!: Record<string, 'auto' | 'approval' | 'blocked'>;
+
     constructor(configPath: string){  
         const obj = JSON.parse(fs.readFileSync(configPath).toString());
         Object.assign(this, obj);

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Voices of the Court</title>
+    <link rel="stylesheet" href="config.css" />
+  </head>
+  <body>
+
+    <div class="navbar">
+      <ul>
+        <li><a href="connection.html">Connection</a></li>
+        <li><a href="actions.html">Actions</a></li>
+        <li><a href="summarization.html">Summarization</a></li>
+        <li><a href="prompts.html">Prompts</a></li>
+        <li><a href="settings.html">Settings</a></li>
+        <li class="active"><a href="letta.html">Letta</a></li>
+        <li><a href="system.html">System</a></li>
+      </ul>
+    </div>
+
+    <div class="container" id="container">
+
+      <h2>Letta Integration</h2>
+      <tooltip-text side="right">Letta (formerly MemGPT) provides persistent, stateful AI agents with managed memory systems. Enable this to use Letta agents for CK3 characters instead of traditional VOTC message generation.</tooltip-text>
+
+      <div class="border">
+        <div class="input-group">
+
+          <config-checkbox confID="lettaEnabled" label="Enable Letta Integration"></config-checkbox>
+          <tooltip-text side="top">When enabled, characters can be assigned Letta agents with persistent memory across conversations</tooltip-text>
+
+          <hr>
+
+          <h3>Server Configuration</h3>
+
+          <div class="row">
+            <div class="column">
+              <config-text confID="lettaServerUrl" label="Letta Server URL"></config-text>
+              <tooltip-text side="top">URL of your Letta server (default: http://localhost:8283)</tooltip-text>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="column">
+              <button type="button" id="test-letta-connection">Test Connection</button>
+              <span id="connection-status"></span>
+            </div>
+          </div>
+
+          <hr>
+
+          <h3>Model Configuration</h3>
+
+          <div class="row">
+            <div class="column">
+              <config-text confID="lettaDefaultModel" label="Default Model"></config-text>
+              <tooltip-text side="top">Model to use for Letta agents (e.g., openai/gpt-4o-mini)</tooltip-text>
+            </div>
+            <div class="column">
+              <config-text confID="lettaDefaultEmbedding" label="Default Embedding"></config-text>
+              <tooltip-text side="top">Embedding model for agent memory (e.g., openai/text-embedding-3-small)</tooltip-text>
+            </div>
+          </div>
+
+          <hr>
+
+          <h3>Event Batching</h3>
+
+          <div class="row">
+            <div class="column">
+              <config-number confID="lettaEventBatchSize" label="Batch Size" min="1" max="100"></config-number>
+              <tooltip-text side="top">Number of events before forcing a flush to agents</tooltip-text>
+            </div>
+            <div class="column">
+              <config-number confID="lettaEventBatchTimeoutMs" label="Batch Timeout (ms)" min="1000" max="3600000"></config-number>
+              <tooltip-text side="top">Maximum time before flushing events (milliseconds)</tooltip-text>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="column">
+              <config-number confID="lettaMaxEventQueueSize" label="Max Queue Size" min="10" max="500"></config-number>
+              <tooltip-text side="top">Maximum queued events before forcing a flush</tooltip-text>
+            </div>
+          </div>
+
+          <hr>
+
+          <h3>Memory & Display</h3>
+
+          <div class="row">
+            <div class="column">
+              <config-checkbox confID="lettaFirstPersonTransform" label="Transform Events to First-Person"></config-checkbox>
+              <tooltip-text side="top">Use LLM to convert game events to character's perspective</tooltip-text>
+            </div>
+            <div class="column">
+              <config-checkbox confID="lettaShowReasoning" label="Show Agent Reasoning"></config-checkbox>
+              <tooltip-text side="top">Display agent reasoning messages in debug logs</tooltip-text>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <br>
+
+      <div class="border">
+        <h3>Agent Management</h3>
+
+        <div class="input-group">
+          <label>Current Save Agents</label>
+          <div id="agent-list">
+            <p id="no-agents-message">No agents loaded. Start a conversation to create agents.</p>
+            <div id="agents-container"></div>
+          </div>
+
+          <hr>
+
+          <div class="row">
+            <div class="column">
+              <button type="button" id="refresh-agents">Refresh Agent List</button>
+            </div>
+            <div class="column">
+              <button type="button" id="backup-agents">Backup All Agents</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <script>require("../../dist/configWindow/components/ConfigCheckbox.js")</script>
+    <script>require("../../dist/configWindow/components/ConfigText.js")</script>
+    <script>require("../../dist/configWindow/components/ConfigNumber.js")</script>
+    <script>require("../../dist/configWindow/components/tooltip.js")</script>
+    <script>require("../../dist/configWindow/lettaRenderer.js")</script>
+
+  </body>
+</html>

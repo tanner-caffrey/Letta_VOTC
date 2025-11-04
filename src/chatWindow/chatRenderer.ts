@@ -5,8 +5,9 @@ import { GameData } from '../shared/gameData/GameData.js';
 const DOMPurify = require('dompurify');
 
 const sanitizeConfig = {
-    ALLOWED_TAGS: ['em', 'strong'], 
-    KEEP_CONTENT: true, 
+    ALLOWED_TAGS: ['em', 'strong', 'span'],
+    ALLOWED_ATTR: ['style'],
+    KEEP_CONTENT: true,
   };
 
 hideChat();
@@ -15,10 +16,13 @@ hideChat();
 let chatMessages: HTMLDivElement = document.querySelector('.messages')!;
 let chatInput: HTMLInputElement= document.querySelector('.chat-input')!;
 let leaveButton: HTMLButtonElement = document.querySelector('.leave-button')!;
+let lettaStatusBar: HTMLDivElement = document.querySelector('#letta-status-bar')!;
+let lettaAgentNameSpan: HTMLSpanElement = document.querySelector('#letta-agent-name')!;
 let loadingDots: any;
 
 let playerName: string;
 let aiName: string;
+let isLettaActive: boolean = false;
 
 
 async function initChat(){
@@ -44,7 +48,14 @@ async function displayMessage(message: Message): Promise<HTMLDivElement>{
         case 'assistant':
             removeLoadingDots();
             messageDiv.classList.add('ai-message');
-            messageDiv.innerHTML = DOMPurify.sanitize(await marked.parseInline(`**${message.name}:** ${message.content}`), sanitizeConfig);
+
+            // Add Letta badge if active
+            let namePrefix = `**${message.name}:**`;
+            if (isLettaActive) {
+                namePrefix = `**${message.name}** <span style="background-color: rgba(100, 150, 255, 0.3); padding: 1px 5px; border-radius: 3px; font-size: 0.75em; margin-left: 5px;">🤖</span>:`;
+            }
+
+            messageDiv.innerHTML = DOMPurify.sanitize(await marked.parseInline(`${namePrefix} ${message.content}`), sanitizeConfig);
 
             break;
     };   
@@ -145,9 +156,23 @@ ipcRenderer.on('chat-hide', () =>{
     hideChat();
 })
 
-ipcRenderer.on('chat-start', (e, gameData: GameData) =>{   
+ipcRenderer.on('chat-start', (e, gameData: GameData, lettaStatus?: { enabled: boolean; agentId: string | null }) =>{
     playerName = gameData.playerName;
     aiName = gameData.aiName;
+    isLettaActive = lettaStatus?.enabled || false;
+
+    // Show/hide Letta status bar
+    if (isLettaActive) {
+        lettaStatusBar.style.display = 'block';
+        if (lettaStatus?.agentId) {
+            lettaAgentNameSpan.innerText = `Agent: ${aiName} (ID: ${lettaStatus.agentId.substring(0, 8)}...)`;
+        } else {
+            lettaAgentNameSpan.innerText = `Agent: ${aiName}`;
+        }
+    } else {
+        lettaStatusBar.style.display = 'none';
+    }
+
     initChat();
     document.body.style.display = '';
 })

@@ -331,7 +331,13 @@ clipboardListener.on('VOTC:IN', async () =>{
 
         console.log("New conversation started!");
         conversation = new Conversation(gameData, config, chatWindow);
-        chatWindow.window.webContents.send('chat-start', conversation.gameData);
+
+        // Send chat start with Letta status
+        const lettaStatus = {
+            enabled: conversation.isUsingLettaAgent(),
+            agentId: conversation.getLettaAgentId()
+        };
+        chatWindow.window.webContents.send('chat-start', conversation.gameData, lettaStatus);
         
     }catch(err){
         console.log("==VOTC:IN ERROR==");
@@ -351,7 +357,115 @@ clipboardListener.on('VOTC:EFFECT_ACCEPTED', async () =>{
     } else {
         console.warn('VOTC:EFFECT_ACCEPTED received but no active conversation.');
     }
-    
+})
+
+// Letta integration event handlers
+clipboardListener.on('VOTC:AGENT_CREATE', async (data: { characterId: number; characterName: string }) => {
+    console.log(`ClipboardListener: VOTC:AGENT_CREATE event for character ${data.characterId}`);
+
+    if (!config.lettaEnabled) {
+        console.warn('Letta is not enabled in config. Ignoring AGENT_CREATE event.');
+        return;
+    }
+
+    if (!conversation || !conversation.lettaAgentManager) {
+        console.warn('No active conversation or Letta agent manager. Cannot create agent.');
+        return;
+    }
+
+    try {
+        // Get character from game data
+        const character = conversation.gameData.getCharacter(data.characterId);
+        if (!character) {
+            console.error(`Character ${data.characterId} not found in game data`);
+            return;
+        }
+
+        // Create or get agent
+        const agentId = await conversation.lettaAgentManager.getOrCreateAgent(
+            data.characterId,
+            conversation.gameData
+        );
+
+        console.log(`Created/retrieved Letta agent for ${character.fullName}: ${agentId}`);
+    } catch (error) {
+        console.error('Error creating Letta agent:', error);
+    }
+})
+
+clipboardListener.on('VOTC:EVENT', async (data: { characterId: number; eventType: string; eventDescription: string }) => {
+    console.log(`ClipboardListener: VOTC:EVENT for character ${data.characterId}: ${data.eventType}`);
+
+    if (!config.lettaEnabled) {
+        return; // Silently ignore if Letta not enabled
+    }
+
+    if (!conversation || !conversation.lettaAgentManager || !conversation.eventBatcher) {
+        console.warn('No active conversation or Letta components. Cannot queue event.');
+        return;
+    }
+
+    try {
+        // Get agent ID for character
+        const agentId = conversation.lettaAgentManager.getAgentId(data.characterId);
+        if (!agentId) {
+            console.log(`No agent for character ${data.characterId}. Ignoring event.`);
+            return;
+        }
+
+        // Queue event
+        const gameEvent = {
+            eventType: data.eventType,
+            timestamp: new Date(),
+            description: data.eventDescription,
+            characterId: data.characterId
+        };
+
+        conversation.eventBatcher.queueEvent(agentId, gameEvent);
+        console.log(`Queued event for agent ${agentId}`);
+    } catch (error) {
+        console.error('Error queueing event:', error);
+    }
+})
+
+clipboardListener.on('VOTC:SAVE_LOAD', async (data: {
+    saveId: string;
+    saveName?: string;
+    gameDate?: string;
+    playerCharacterId?: number;
+}) => {
+    console.log(`ClipboardListener: VOTC:SAVE_LOAD for save ${data.saveId}`);
+
+    if (!config.lettaEnabled) {
+        return;
+    }
+
+    // Note: We can't initialize agents here because we don't have a conversation yet
+    // This event is mainly for tracking that a save was loaded
+    // Agent initialization will happen on first VOTC:IN event after this
+    console.log(`Save loaded: ${data.saveId} (${data.saveName || 'unnamed'})`);
+    console.log('Agents will be initialized when first conversation starts.');
+})
+
+clipboardListener.on('VOTC:SAVE_CLOSE', async (data: { saveId: string }) => {
+    console.log(`ClipboardListener: VOTC:SAVE_CLOSE for save ${data.saveId}`);
+
+    if (!config.lettaEnabled) {
+        return;
+    }
+
+    if (!conversation || !conversation.lettaAgentManager) {
+        console.log('No active conversation or agent manager. No agents to backup.');
+        return;
+    }
+
+    try {
+        console.log('Backing up Letta agents for save...');
+        await conversation.lettaAgentManager.backupAgentsForSave();
+        console.log('Letta agents backed up successfully');
+    } catch (error) {
+        console.error('Error backing up Letta agents:', error);
+    }
 })
 
 //IPC 
@@ -381,6 +495,72 @@ ipcMain.handle('get-config', () => {
 ipcMain.handle('get-userdata-path', () => {
     console.log('IPC: Received get-userdata-path event.');
     return path.join(app.getPath("userData"), 'votc_data')
+});
+
+ipcMain.handle('test-letta-connection', async () => {
+    console.log('IPC: Received test-letta-connection event.');
+    try {
+        if (!config.lettaEnabled) {
+            return { success: false, error: 'Letta integration is not enabled' };
+        }
+
+        // Try to create a Letta client and get server info
+        const { LettaClient } = await import('@letta-ai/letta-client');
+        const client = new LettaClient({
+            baseUrl: config.lettaServerUrl
+        });
+
+        // Test connection by getting agents (lightweight operation)
+        const agents = await (client as any).agents.list();
+
+        return {
+            success: true,
+            serverInfo: {
+                agentCount: agents.length
+            }
+        };
+    } catch (error: any) {
+        console.error('Letta connection test failed:', error);
+        return { success: false, error: error.message || 'Unknown error' };
+    }
+});
+
+ipcMain.handle('get-letta-agents', async () => {
+    console.log('IPC: Received get-letta-agents event.');
+    try {
+        if (!config.lettaEnabled) {
+            return { success: false, error: 'Letta integration is not enabled' };
+        }
+
+        if (!conversation || !conversation.lettaAgentManager) {
+            return { success: true, agents: [] };
+        }
+
+        const agents = conversation.lettaAgentManager.getAllAgents();
+        return { success: true, agents };
+    } catch (error: any) {
+        console.error('Failed to get Letta agents:', error);
+        return { success: false, error: error.message || 'Unknown error' };
+    }
+});
+
+ipcMain.handle('backup-letta-agents', async () => {
+    console.log('IPC: Received backup-letta-agents event.');
+    try {
+        if (!config.lettaEnabled) {
+            return { success: false, error: 'Letta integration is not enabled' };
+        }
+
+        if (!conversation || !conversation.lettaAgentManager) {
+            return { success: false, error: 'No active conversation with Letta agents' };
+        }
+
+        await conversation.lettaAgentManager.backupAgentsForSave();
+        return { success: true };
+    } catch (error: any) {
+        console.error('Failed to backup Letta agents:', error);
+        return { success: false, error: error.message || 'Unknown error' };
+    }
 });
 
 

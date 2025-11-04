@@ -16,6 +16,7 @@
   "author": "Durond",
   "license": "GNU GPLv3",
   "dependencies": {
+    "@letta-ai/letta-client": "^0.0.68665",
     "@paymoapp/active-window": "^2.1.1",
     "dompurify": "^3.0.8",
     "electron-overlay-window": "^3.3.0",
