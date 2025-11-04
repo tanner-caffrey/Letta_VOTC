@@ -361,33 +361,55 @@ clipboardListener.on('VOTC:EFFECT_ACCEPTED', async () =>{
 
 // Letta integration event handlers
 clipboardListener.on('VOTC:AGENT_CREATE', async (data: { characterId: number; characterName: string }) => {
-    console.log(`ClipboardListener: VOTC:AGENT_CREATE event for character ${data.characterId}`);
+    console.log(`ClipboardListener: VOTC:AGENT_CREATE event for character ${data.characterId} (${data.characterName})`);
 
     if (!config.lettaEnabled) {
         console.warn('Letta is not enabled in config. Ignoring AGENT_CREATE event.');
         return;
     }
 
-    if (!conversation || !conversation.lettaAgentManager) {
-        console.warn('No active conversation or Letta agent manager. Cannot create agent.');
-        return;
-    }
-
     try {
-        // Get character from game data
-        const character = conversation.gameData.getCharacter(data.characterId);
-        if (!character) {
-            console.error(`Character ${data.characterId} not found in game data`);
+        // Parse the character data from the debug log (same as VOTC:IN)
+        const logFilePath = path.join(config.userFolderPath, 'logs', 'debug.log');
+        console.log(`Parsing character data from game log: ${logFilePath}`);
+
+        const gameData = await parseLog(logFilePath);
+        if (!gameData || !gameData.aiID) {
+            throw new Error(`Failed to parse character data from log file for AGENT_CREATE. Could not find character data in ${logFilePath}.`);
+        }
+
+        // Initialize Letta agent manager if not already done (first agent creation)
+        if (!conversation || !conversation.lettaAgentManager) {
+            console.log('No active conversation. Initializing Letta agent manager for standalone agent creation.');
+
+            // Import Letta classes
+            const { LettaAgentManager } = await import('./letta/LettaAgentManager.js');
+
+            // Create a temporary agent manager for this save
+            const lettaAgentManager = new LettaAgentManager(config);
+
+            // Generate save ID from game data
+            const saveId = LettaAgentManager.generateSaveId(gameData);
+            await lettaAgentManager.initializeForSave({ saveId, saveName: undefined });
+
+            // Create the agent
+            const agentId = await lettaAgentManager.getOrCreateAgent(
+                gameData.aiID,
+                gameData
+            );
+
+            console.log(`✓ Letta agent created for ${data.characterName} (Agent ID: ${agentId.substring(0, 8)}...)`);
+            console.log(`Agent will be available in future conversations with this character.`);
             return;
         }
 
-        // Create or get agent
+        // If there's an active conversation, use its agent manager
         const agentId = await conversation.lettaAgentManager.getOrCreateAgent(
             data.characterId,
             conversation.gameData
         );
 
-        console.log(`Created/retrieved Letta agent for ${character.fullName}: ${agentId}`);
+        console.log(`✓ Letta agent created for ${data.characterName} (Agent ID: ${agentId.substring(0, 8)}...)`);
     } catch (error) {
         console.error('Error creating Letta agent:', error);
     }
