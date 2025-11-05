@@ -312,12 +312,14 @@ ipcMain.on('clear-summaries', ()=>{
 })
 
 let conversation: Conversation;
+let lettaAgentManager: any = null; // Global Letta agent manager, shared across conversations
+let currentSaveId: string | null = null; // Track current save ID
 
 clipboardListener.on('VOTC:IN', async () =>{
     console.log('ClipboardListener: VOTC:IN event detected. Showing chat window.');
     chatWindow.show();
     chatWindow.window.webContents.send('chat-show');
-    try{ 
+    try{
         console.log("Waiting briefly for log file to update...");
         await sleep(250);
 
@@ -330,7 +332,8 @@ clipboardListener.on('VOTC:IN', async () =>{
         }
 
         console.log("New conversation started!");
-        conversation = new Conversation(gameData, config, chatWindow);
+        // Pass global Letta agent manager to conversation if it exists
+        conversation = new Conversation(gameData, config, chatWindow, lettaAgentManager);
 
         // Send chat start with Letta status
         const lettaStatus = {
@@ -338,7 +341,7 @@ clipboardListener.on('VOTC:IN', async () =>{
             agentId: conversation.getLettaAgentId()
         };
         chatWindow.window.webContents.send('chat-start', conversation.gameData, lettaStatus);
-        
+
     }catch(err){
         console.log("==VOTC:IN ERROR==");
         console.error(err); // Changed from console.log(err)
@@ -378,38 +381,34 @@ clipboardListener.on('VOTC:AGENT_CREATE', async (data: { characterId: number; ch
             throw new Error(`Failed to parse character data from log file for AGENT_CREATE. Could not find character data in ${logFilePath}.`);
         }
 
-        // Initialize Letta agent manager if not already done (first agent creation)
-        if (!conversation || !conversation.lettaAgentManager) {
-            console.log('No active conversation. Initializing Letta agent manager for standalone agent creation.');
+        // Initialize Letta agent manager if not already done
+        if (!lettaAgentManager) {
+            console.log('Initializing Letta agent manager for agent creation...');
 
             // Import Letta classes
             const { LettaAgentManager } = await import('./letta/LettaAgentManager.js');
 
-            // Create a temporary agent manager for this save
-            const lettaAgentManager = new LettaAgentManager(config);
+            // Create global agent manager
+            lettaAgentManager = new LettaAgentManager(config);
 
-            // Generate save ID from game data
-            const saveId = LettaAgentManager.generateSaveId(gameData);
+            // Generate save ID from game data or use current one
+            const saveId = currentSaveId || LettaAgentManager.generateSaveId(gameData);
             await lettaAgentManager.initializeForSave({ saveId, saveName: undefined });
 
-            // Create the agent
-            const agentId = await lettaAgentManager.getOrCreateAgent(
-                gameData.aiID,
-                gameData
-            );
-
-            console.log(`✓ Letta agent created for ${data.characterName} (Agent ID: ${agentId.substring(0, 8)}...)`);
-            console.log(`Agent will be available in future conversations with this character.`);
-            return;
+            if (!currentSaveId) {
+                currentSaveId = saveId;
+                console.log(`Generated save ID from game data: ${saveId}`);
+            }
         }
 
-        // If there's an active conversation, use its agent manager
-        const agentId = await conversation.lettaAgentManager.getOrCreateAgent(
-            data.characterId,
-            conversation.gameData
+        // Create the agent
+        const agentId = await lettaAgentManager.getOrCreateAgent(
+            gameData.aiID,
+            gameData
         );
 
         console.log(`✓ Letta agent created for ${data.characterName} (Agent ID: ${agentId.substring(0, 8)}...)`);
+        console.log(`Agent will be available in future conversations with this character.`);
     } catch (error) {
         console.error('Error creating Letta agent:', error);
     }
@@ -456,17 +455,31 @@ clipboardListener.on('VOTC:SAVE_LOAD', async (data: {
     gameDate?: string;
     playerCharacterId?: number;
 }) => {
-    console.log(`ClipboardListener: VOTC:SAVE_LOAD for save ${data.saveId}`);
+    console.log(`ClipboardListener: VOTC:SAVE_LOAD for save ${data.saveId} (${data.saveName || 'unnamed'})`);
 
     if (!config.lettaEnabled) {
         return;
     }
 
-    // Note: We can't initialize agents here because we don't have a conversation yet
-    // This event is mainly for tracking that a save was loaded
-    // Agent initialization will happen on first VOTC:IN event after this
-    console.log(`Save loaded: ${data.saveId} (${data.saveName || 'unnamed'})`);
-    console.log('Agents will be initialized when first conversation starts.');
+    try {
+        // Import Letta classes
+        const { LettaAgentManager } = await import('./letta/LettaAgentManager.js');
+
+        // Initialize or reinitialize agent manager for this save
+        console.log('Initializing Letta agent manager for save...');
+        lettaAgentManager = new LettaAgentManager(config);
+        await lettaAgentManager.initializeForSave({
+            saveId: data.saveId,
+            saveName: data.saveName
+        });
+
+        currentSaveId = data.saveId;
+        console.log(`✓ Letta agent manager initialized for save ${data.saveId}`);
+    } catch (error) {
+        console.error('Error initializing Letta agent manager on save load:', error);
+        lettaAgentManager = null;
+        currentSaveId = null;
+    }
 })
 
 clipboardListener.on('VOTC:SAVE_CLOSE', async (data: { saveId: string }) => {
@@ -476,15 +489,20 @@ clipboardListener.on('VOTC:SAVE_CLOSE', async (data: { saveId: string }) => {
         return;
     }
 
-    if (!conversation || !conversation.lettaAgentManager) {
-        console.log('No active conversation or agent manager. No agents to backup.');
+    if (!lettaAgentManager) {
+        console.log('No agent manager initialized. No agents to backup.');
         return;
     }
 
     try {
         console.log('Backing up Letta agents for save...');
-        await conversation.lettaAgentManager.backupAgentsForSave();
-        console.log('Letta agents backed up successfully');
+        await lettaAgentManager.backupAgentsForSave();
+        console.log('✓ Letta agents backed up successfully');
+
+        // Clean up
+        lettaAgentManager = null;
+        currentSaveId = null;
+        console.log('Agent manager cleaned up');
     } catch (error) {
         console.error('Error backing up Letta agents:', error);
     }

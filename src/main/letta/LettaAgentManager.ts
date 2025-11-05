@@ -235,25 +235,35 @@ export class LettaAgentManager {
         console.log(`Backing up agents for save: ${this.currentSaveId}`);
         const backupPath = path.join(this.getSavePath(this.currentSaveId), 'agent_backups');
 
+        // Ensure backup directory exists
+        if (!fs.existsSync(backupPath)) {
+            fs.mkdirSync(backupPath, { recursive: true });
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+
         for (const [characterId, mapping] of this.agentMappings) {
             try {
                 console.log(`Backing up agent for character ${characterId}: ${mapping.agentId}`);
 
-                // TODO: Implement agent export once SDK method is confirmed
-                // Export agent to .af format
-                // const agentData = await this.client.agents.exportAgentSerialized(mapping.agentId);
+                // Export agent to serialized format (JSON string)
+                const agentSchema = await this.client.agents.exportFile(mapping.agentId);
 
-                // Save to file
-                // const backupFilePath = path.join(backupPath, `${characterId}_${mapping.agentId}.af`);
-                // fs.writeFileSync(backupFilePath, JSON.stringify(agentData, null, '\t'));
+                // Save to .af file
+                const backupFilePath = path.join(backupPath, `${characterId}_${mapping.agentId}.af`);
+                // agentSchema is already a formatted JSON string from exportFile
+                fs.writeFileSync(backupFilePath, agentSchema);
 
-                console.log(`Agent backup temporarily disabled - TODO: implement with correct SDK method`);
+                console.log(`✓ Successfully backed up agent to ${backupFilePath}`);
+                successCount++;
             } catch (error) {
-                console.error(`Error backing up agent for character ${characterId}:`, error);
+                console.error(`✗ Error backing up agent for character ${characterId}:`, error);
+                failCount++;
             }
         }
 
-        console.log(`Completed backup of ${this.agentMappings.size} agents`);
+        console.log(`Completed backup: ${successCount} succeeded, ${failCount} failed (${this.agentMappings.size} total)`);
     }
 
     /**
@@ -270,37 +280,76 @@ export class LettaAgentManager {
 
         const backupFiles = fs.readdirSync(backupPath).filter(file => file.endsWith('.af'));
 
+        if (backupFiles.length === 0) {
+            console.log('No .af backup files found');
+            return;
+        }
+
+        console.log(`Found ${backupFiles.length} agent backup(s) to restore`);
+
+        let successCount = 0;
+        let failCount = 0;
+
         for (const file of backupFiles) {
             try {
                 const filePath = path.join(backupPath, file);
                 console.log(`Restoring agent from ${file}`);
 
-                // TODO: Implement agent import once SDK method is confirmed
-                // Read .af file
-                // const fileContent = fs.readFileSync(filePath, 'utf8');
-                // const blob = new Blob([fileContent], { type: 'application/json' });
+                // Read .af file and create ReadStream
+                const fileStream = fs.createReadStream(filePath);
 
-                // Import agent
-                // const agentState = await this.client.agents.importAgentSerialized(blob, {});
+                // Import agent from file
+                // Returns ImportedAgentsResponse with imported agent IDs
+                const importResponse = await this.client.agents.importFile(fileStream, {});
 
-                console.log(`Agent restore temporarily disabled - TODO: implement with correct SDK method`);
+                // importFile returns list of imported agent IDs
+                if (!importResponse.agentIds || importResponse.agentIds.length === 0) {
+                    console.warn(`No agents imported from ${file}`);
+                    continue;
+                }
 
-                // Extract character ID from filename
-                // const characterId = parseInt(file.split('_')[0]);
+                // Use the first imported agent (should only be one per file)
+                const newAgentId = importResponse.agentIds[0];
+                console.log(`✓ Successfully imported agent: ${newAgentId}`);
 
-                // Update mapping with new agent ID (may have changed on import)
-                // const existingMapping = this.agentMappings.get(characterId);
-                // if (existingMapping) {
-                //     existingMapping.agentId = agentState.id;
-                //     existingMapping.lastUpdated = new Date().toISOString();
-                //     this.saveMappings();
-                // }
+                // Get the agent state to extract name
+                const agentState = await this.client.agents.retrieve(newAgentId);
+
+                // Extract character ID from filename format: {characterId}_{oldAgentId}.af
+                const characterId = parseInt(file.split('_')[0]);
+
+                if (isNaN(characterId)) {
+                    console.warn(`Could not extract character ID from filename: ${file}`);
+                    continue;
+                }
+
+                // Update or create mapping with new agent ID
+                // (Agent ID may change on import)
+                const mapping: AgentMapping = {
+                    characterId: characterId,
+                    agentId: newAgentId,
+                    characterName: agentState.name.replace(`votc_${saveId}_${characterId}_`, ''), // Extract character name
+                    createdAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString()
+                };
+
+                this.agentMappings.set(characterId, mapping);
+                console.log(`✓ Restored agent mapping for character ${characterId} → ${newAgentId}`);
+
+                successCount++;
             } catch (error) {
-                console.error(`Error restoring agent from ${file}:`, error);
+                console.error(`✗ Error restoring agent from ${file}:`, error);
+                failCount++;
             }
         }
 
-        console.log(`Completed restoration of ${backupFiles.length} agents`);
+        // Save updated mappings to disk
+        if (successCount > 0) {
+            this.saveMappings();
+            console.log(`Saved ${successCount} restored agent mapping(s)`);
+        }
+
+        console.log(`Completed restoration: ${successCount} succeeded, ${failCount} failed (${backupFiles.length} total)`);
     }
 
     /**

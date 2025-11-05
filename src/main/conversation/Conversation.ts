@@ -41,7 +41,7 @@ export class Conversation{
     memoryTransformer?: MemoryTransformer;
     lettaMessageHandler?: LettaMessageHandler;
 
-    constructor(gameData: GameData, config: Config, chatWindow: ChatWindow){
+    constructor(gameData: GameData, config: Config, chatWindow: ChatWindow, existingLettaManager?: LettaAgentManager){
         console.log('Conversation initialized.');
         this.chatWindow = chatWindow;
         this.isOpen = true;
@@ -96,7 +96,20 @@ export class Conversation{
         if (config.lettaEnabled) {
             console.log('Initializing Letta integration');
             try {
-                this.lettaAgentManager = new LettaAgentManager(config);
+                // Use existing agent manager if provided, otherwise create new one
+                if (existingLettaManager) {
+                    console.log('Using existing Letta agent manager');
+                    this.lettaAgentManager = existingLettaManager;
+                    // Note: Agent manager should already be initialized from main.ts
+                } else {
+                    console.log('Creating new Letta agent manager');
+                    this.lettaAgentManager = new LettaAgentManager(config);
+
+                    // Note: Cannot await in constructor. Initialization must happen in main.ts
+                    // or in an async init method called after construction
+                    console.warn('Letta agent manager created but not initialized. Call initializeForSave() separately.');
+                }
+
                 this.memoryTransformer = new MemoryTransformer(config);
                 this.eventBatcher = new EventBatcher(
                     config,
